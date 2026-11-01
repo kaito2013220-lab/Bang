@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>バン！カスタム効果音アプリ</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #1a1a1a;
+      font-family: sans-serif;
+      color: #fff;
+    }
+    #container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      position: relative;
+      padding: 20px 0;
+    }
+    .text-display {
+      font-size: 5rem;
+      font-weight: 900;
+      color: #ff3333;
+      text-shadow: 0 0 20px rgba(255, 51, 51, 0.8), 3px 3px 0 #000;
+      opacity: 0;
+      transform: scale(0.5) rotate(-5deg);
+      transition: transform 0.05s ease-out, opacity 0.05s ease-out;
+      pointer-events: none;
+      margin-top: auto;
+      margin-bottom: auto;
+    }
+    .text-display.bang {
+      opacity: 1;
+      transform: scale(1.5) rotate(5deg);
+      animation: shake 0.2s ease-in-out;
+    }
+    #controls {
+      width: 90%;
+      max-width: 400px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 15px 20px;
+      border-radius: 12px;
+      z-index: 20;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }
+    .control-group {
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+    }
+    .control-group label {
+      font-size: 0.85rem;
+      margin-bottom: 4px;
+      color: #ccc;
+    }
+    .btn-group {
+      display: flex;
+      gap: 10px;
+    }
+    .preset-btn {
+      flex: 1;
+      padding: 8px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .preset-btn.active {
+      background: #ff3333;
+      border-color: #ff3333;
+    }
+    input[type=range] {
+      width: 100%;
+    }
+    #perm-btn {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 30;
+      padding: 16px 32px;
+      font-size: 1.3rem;
+      font-weight: bold;
+      background-color: #ff3333;
+      color: white;
+      border: none;
+      border-radius: 30px;
+      box-shadow: 0 4px 15px rgba(255, 51, 51, 0.4);
+      cursor: pointer;
+    }
+    @keyframes shake {
+      0% { transform: translate(0, 0) scale(1.5) rotate(5deg); }
+      25% { transform: translate(-10px, 10px) scale(1.6) rotate(-5deg); }
+      50% { transform: translate(10px, -10px) scale(1.4) rotate(8deg); }
+      75% { transform: translate(-5px, -5px) scale(1.5) rotate(-3deg); }
+      100% { transform: translate(0, 0) scale(1.5) rotate(5deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <button id="perm-btn">タップしてスタート</button>
+
+  <div id="container">
+    <div id="bang-text" class="text-display">パン！</div>
+
+    <div id="controls">
+      <div class="control-group">
+        <label>プリセット</label>
+        <div class="btn-group">
+          <button class="preset-btn active" id="btn-pistol">ピストル (高音)</button>
+          <button class="preset-btn" id="btn-cannon">重砲 (低音)</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>トーン / フィルター周波数: <span id="val-freq">3000</span> Hz</label>
+        <input type="range" id="slider-freq" min="200" max="8000" value="3000">
+      </div>
+      <div class="control-group">
+        <label>音の長さ (減衰): <span id="val-decay">0.15</span> 秒</label>
+        <input type="range" id="slider-decay" min="0.05" max="0.8" step="0.01" value="0.15">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const bangText = document.getElementById('bang-text');
+    const permBtn = document.getElementById('perm-btn');
+    const container = document.getElementById('container');
+    const controls = document.getElementById('controls');
+
+    const sliderFreq = document.getElementById('slider-freq');
+    const sliderDecay = document.getElementById('slider-decay');
+    const valFreq = document.getElementById('val-freq');
+    const valDecay = document.getElementById('val-decay');
+
+    const btnPistol = document.getElementById('btn-pistol');
+    const btnCannon = document.getElementById('btn-cannon');
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let videoTrack = null;
+
+    // カメラ/ライト初期化
+    async function initCameraTorch() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        videoTrack = stream.getVideoTracks()[0];
+      } catch (err) {
+        console.warn('カメラ・フラッシュライト制御不可:', err);
+      }
+    }
+
+    // ライト点灯
+    function flashTorch(durationMs) {
+      if (!videoTrack) return;
+      const capabilities = videoTrack.getCapabilities();
+      if (capabilities.torch) {
+        videoTrack.applyConstraints({ advanced: [{ torch: true }] })
+          .then(() => {
+            setTimeout(() => {
+              videoTrack.applyConstraints({ advanced: [{ torch: false }] });
+            }, durationMs);
+          }).catch(console.error);
+      }
+    }
+
+    // パラメータに応じた音の動的生成
+    function playBangSound() {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
+      const cutoffFreq = parseFloat(sliderFreq.value);
+      const decayTime = parseFloat(sliderDecay.value);
+
+      const now = audioCtx.currentTime;
+
+      // 1. ノイズソース（衝撃・破裂音のベース）
+      const bufferSize = audioCtx.sampleRate * decayTime;
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = buffer;
+
+      // フィルター制御（高音ならハイパス/バンドパス寄りの高周波、低音ならローパス）
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(cutoffFreq, now);
+      filter.frequency.exponentialRampToValueAtTime(20, now + decayTime);
+
+      // 音量減衰（アタック＆ディケイ）
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + decayTime);
+
+      noise.connect(filter);
+
+      // 2. ピッチ成分（大砲などの低音響きを追加するオシレーター）
+      if (cutoffFreq < 1500) {
+        const osc = audioCtx.createOscillator();
+        const oscGain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(120, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + decayTime);
+
+        oscGain.gain.setValueAtTime(0.8, now);
+        oscGain.gain.exponentialRampToValueAtTime(0.001, now + decayTime);
+
+        osc.connect(oscGain);
+        oscGain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + decayTime);
+      }
+
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      noise.start(now);
+    }
+
+    // 発動処理
+    let isCoolingDown = false;
+    function triggerBang() {
+      if (isCoolingDown) return;
+      isCoolingDown = true;
+
+      const decayMs = parseFloat(sliderDecay.value) * 1000;
+
+      playBangSound();
+      flashTorch(Math.min(decayMs, 200));
+
+      if (navigator.vibrate) {
+        navigator.vibrate(Math.min(decayMs, 200));
+      }
+
+      bangText.classList.add('bang');
+      document.body.style.backgroundColor = '#ffffff';
+
+      setTimeout(() => {
+        document.body.style.backgroundColor = '#1a1a1a';
+      }, 50);
+
+      setTimeout(() => {
+        bangText.classList.remove('bang');
+        isCoolingDown = false;
+      }, 150);
+    }
+
+    // スライダー連動
+    sliderFreq.addEventListener('input', (e) => valFreq.textContent = e.target.value);
+    sliderDecay.addEventListener('input', (e) => valDecay.textContent = e.target.value);
+
+    // プリセット設定
+    btnPistol.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sliderFreq.value = 4500;
+      sliderDecay.value = 0.10;
+      valFreq.textContent = '4500';
+      valDecay.textContent = '0.10';
+      bangText.textContent = 'パン！';
+      btnPistol.classList.add('active');
+      btnCannon.classList.remove('active');
+    });
+
+    btnCannon.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sliderFreq.value = 600;
+      sliderDecay.value = 0.45;
+      valFreq.textContent = '600';
+      valDecay.textContent = '0.45';
+      bangText.textContent = 'ドカン！';
+      btnCannon.classList.add('active');
+      btnPistol.classList.remove('active');
+    });
+
+    // モーション検知
+    let lastX = null, lastY = null, lastZ = null;
+    const SHAKE_THRESHOLD = 15;
+
+    function handleMotion(event) {
+      const current = event.accelerationIncludingGravity;
+      if (!current || current.x === null) return;
+
+      if (lastX !== null) {
+        const deltaX = Math.abs(current.x - lastX);
+        const deltaY = Math.abs(current.y - lastY);
+        const deltaZ = Math.abs(current.z - lastZ);
+
+        if (deltaX + deltaY + deltaZ > SHAKE_THRESHOLD) {
+          triggerBang();
+        }
+      }
+
+      lastX = current.x;
+      lastY = current.y;
+      lastZ = current.z;
+    }
+
+    // 設定操作時に発動するのを防止
+    controls.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+    permBtn.addEventListener('click', async () => {
+      audioCtx.resume();
+      permBtn.style.display = 'none';
+
+      await initCameraTorch();
+
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission()
+          .then(response => {
+            if (response === 'granted') {
+              window.addEventListener('devicemotion', handleMotion);
+            }
+          })
+          .catch(console.error);
+      } else {
+        window.addEventListener('devicemotion', handleMotion);
+      }
+    });
+
+    container.addEventListener('pointerdown', () => {
+      if (permBtn.style.display === 'none') {
+        triggerBang();
+      }
+    });
+  </script>
+</body>
+</html>
