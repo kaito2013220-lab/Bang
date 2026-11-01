@@ -155,7 +155,6 @@
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     let videoTrack = null;
 
-    // カメラ/ライト初期化
     async function initCameraTorch() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -167,7 +166,6 @@
       }
     }
 
-    // ライト点灯
     function flashTorch(durationMs) {
       if (!videoTrack) return;
       const capabilities = videoTrack.getCapabilities();
@@ -181,7 +179,6 @@
       }
     }
 
-    // パラメータに応じた音の動的生成
     function playBangSound() {
       if (audioCtx.state === 'suspended') {
         audioCtx.resume();
@@ -189,10 +186,8 @@
 
       const cutoffFreq = parseFloat(sliderFreq.value);
       const decayTime = parseFloat(sliderDecay.value);
-
       const now = audioCtx.currentTime;
 
-      // 1. ノイズソース（衝撃・破裂音のベース）
       const bufferSize = audioCtx.sampleRate * decayTime;
       const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
       const data = buffer.getChannelData(0);
@@ -203,20 +198,17 @@
       const noise = audioCtx.createBufferSource();
       noise.buffer = buffer;
 
-      // フィルター制御（高音ならハイパス/バンドパス寄りの高周波、低音ならローパス）
       const filter = audioCtx.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.setValueAtTime(cutoffFreq, now);
       filter.frequency.exponentialRampToValueAtTime(20, now + decayTime);
 
-      // 音量減衰（アタック＆ディケイ）
       const gain = audioCtx.createGain();
       gain.gain.setValueAtTime(1, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + decayTime);
 
       noise.connect(filter);
 
-      // 2. ピッチ成分（大砲などの低音響きを追加するオシレーター）
       if (cutoffFreq < 1500) {
         const osc = audioCtx.createOscillator();
         const oscGain = audioCtx.createGain();
@@ -238,7 +230,6 @@
       noise.start(now);
     }
 
-    // 発動処理
     let isCoolingDown = false;
     function triggerBang() {
       if (isCoolingDown) return;
@@ -266,11 +257,9 @@
       }, 150);
     }
 
-    // スライダー連動
     sliderFreq.addEventListener('input', (e) => valFreq.textContent = e.target.value);
     sliderDecay.addEventListener('input', (e) => valDecay.textContent = e.target.value);
 
-    // プリセット設定
     btnPistol.addEventListener('click', (e) => {
       e.stopPropagation();
       sliderFreq.value = 4500;
@@ -293,30 +282,52 @@
       btnPistol.classList.remove('active');
     });
 
-    // モーション検知
+    // モーション検知（通常シェイク ＋ ↗向き60°スイング判定）
     let lastX = null, lastY = null, lastZ = null;
-    const SHAKE_THRESHOLD = 15;
+    const GENERAL_SHAKE_THRESHOLD = 16;
+    const SWING_ACCEL_THRESHOLD = 10; // 振り上げ時の加速度閾値
 
     function handleMotion(event) {
-      const current = event.accelerationIncludingGravity;
-      if (!current || current.x === null) return;
+      // 重力を除外した純粋な運動加速度を取得（取得できない場合は重力込み値を使用）
+      const accel = event.acceleration || event.accelerationIncludingGravity;
+      if (!accel || accel.x === null) return;
 
-      if (lastX !== null) {
+      const ax = accel.x; // 右方向 (+) / 左方向 (-)
+      const ay = accel.y; // 上方向 (+) / 下方向 (-)
+
+      // ↗（右上60°方向）のベクトル判定
+      // 右（+X）かつ上（+Y）に加速度が発生しているか
+      if (ax > 3 && ay > 3) {
+        // 角度（ラジアン → 度）を計算
+        const angleDeg = Math.atan2(ay, ax) * (180 / Math.PI);
+        const magnitude = Math.sqrt(ax * ax + ay * ay);
+
+        // 角度がほぼ60°（40°〜75°の許容範囲）かつ振りの強さが閾値を超えた場合
+        if (angleDeg >= 40 && angleDeg <= 75 && magnitude > SWING_ACCEL_THRESHOLD) {
+          triggerBang();
+          return;
+        }
+      }
+
+      // 従来の全方向シェイク判定
+      const current = event.accelerationIncludingGravity;
+      if (lastX !== null && current) {
         const deltaX = Math.abs(current.x - lastX);
         const deltaY = Math.abs(current.y - lastY);
         const deltaZ = Math.abs(current.z - lastZ);
 
-        if (deltaX + deltaY + deltaZ > SHAKE_THRESHOLD) {
+        if (deltaX + deltaY + deltaZ > GENERAL_SHAKE_THRESHOLD) {
           triggerBang();
         }
       }
 
-      lastX = current.x;
-      lastY = current.y;
-      lastZ = current.z;
+      if (current) {
+        lastX = current.x;
+        lastY = current.y;
+        lastZ = current.z;
+      }
     }
 
-    // 設定操作時に発動するのを防止
     controls.addEventListener('pointerdown', (e) => e.stopPropagation());
 
     permBtn.addEventListener('click', async () => {
